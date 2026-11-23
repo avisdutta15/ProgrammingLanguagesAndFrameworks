@@ -1,0 +1,917 @@
+# Java JDBC — Complete Tutorial
+
+> A hands-on guide to Java Database Connectivity (JDBC) — connecting to databases, executing queries, and handling results using plain Java (no Spring, no Hibernate).
+
+---
+
+## Table of Contents
+
+1. [What is JDBC?](#1-what-is-jdbc)
+2. [Architecture and Components](#2-architecture-and-components)
+3. [Setting Up — Driver and Database](#3-setting-up--driver-and-database)
+4. [Connecting to a Database](#4-connecting-to-a-database)
+5. [Statement — Executing Queries](#5-statement--executing-queries)
+6. [PreparedStatement — Parameterized Queries](#6-preparedstatement--parameterized-queries)
+7. [ResultSet — Reading Results](#7-resultset--reading-results)
+8. [CRUD Operations — Full Example](#8-crud-operations--full-example)
+9. [Transactions](#9-transactions)
+10. [Batch Processing](#10-batch-processing)
+11. [CallableStatement — Stored Procedures](#11-callablestatement--stored-procedures)
+12. [Connection Pooling](#12-connection-pooling)
+13. [DAO Pattern — Organizing JDBC Code](#13-dao-pattern--organizing-jdbc-code)
+14. [Common Errors and Troubleshooting](#14-common-errors-and-troubleshooting)
+15. [Best Practices](#15-best-practices)
+
+---
+
+## 1. What is JDBC?
+
+JDBC (Java Database Connectivity) is Java's standard API for talking to relational databases. It provides a uniform interface — the same Java code works with MySQL, PostgreSQL, Oracle, SQLite, etc. You just swap the driver.
+
+```
+Your Java Code
+      │
+      ▼
+┌─────────────────┐
+│   JDBC API      │   (java.sql.* — interfaces)
+│   (standard)    │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│   JDBC Driver   │   (vendor-specific implementation)
+│   (e.g., MySQL) │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│   Database      │   (MySQL, PostgreSQL, Oracle, etc.)
+└─────────────────┘
+```
+
+**C# equivalent:** `ADO.NET` (`System.Data`) — same concept. JDBC = ADO.NET, JDBC Driver = Data Provider (SqlClient, Npgsql).
+
+---
+
+## 2. Architecture and Components
+
+### Core Interfaces (in `java.sql`)
+
+| Interface | Purpose | C# Equivalent |
+|-----------|---------|---------------|
+| `DriverManager` | Manages drivers, creates connections | `DbProviderFactory` |
+| `Connection` | A session with the database | `SqlConnection` |
+| `Statement` | Executes a static SQL query | `SqlCommand` |
+| `PreparedStatement` | Executes parameterized SQL (precompiled) | `SqlCommand` with parameters |
+| `CallableStatement` | Calls stored procedures | `SqlCommand` (CommandType.StoredProcedure) |
+| `ResultSet` | Iterates over query results (rows) | `SqlDataReader` |
+
+### How They Connect
+
+```
+DriverManager.getConnection(url, user, pass)
+         │
+         ▼
+    Connection conn
+         │
+         ├── conn.createStatement()        → Statement
+         ├── conn.prepareStatement(sql)    → PreparedStatement
+         └── conn.prepareCall(sql)         → CallableStatement
+                    │
+                    ▼
+              ResultSet rs (for SELECT queries)
+```
+
+---
+
+## 3. Setting Up — Driver and Database
+
+### Adding the JDBC Driver
+
+The driver is a JAR file you add to your classpath (or Maven dependency).
+
+**Maven (pom.xml):**
+```xml
+<!-- MySQL -->
+<dependency>
+    <groupId>com.mysql</groupId>
+    <artifactId>mysql-connector-j</artifactId>
+    <version>8.2.0</version>
+</dependency>
+
+<!-- PostgreSQL -->
+<dependency>
+    <groupId>org.postgresql</groupId>
+    <artifactId>postgresql</artifactId>
+    <version>42.7.1</version>
+</dependency>
+
+<!-- SQLite (good for learning — no server needed) -->
+<dependency>
+    <groupId>org.xerial</groupId>
+    <artifactId>sqlite-jdbc</artifactId>
+    <version>3.44.1.0</version>
+</dependency>
+
+<!-- H2 (in-memory database — great for testing) -->
+<dependency>
+    <groupId>com.h2database</groupId>
+    <artifactId>h2</artifactId>
+    <version>2.2.224</version>
+</dependency>
+```
+
+**Without Maven — manual classpath:**
+```bash
+# Download the JAR and add to classpath
+javac -cp mysql-connector-j-8.2.0.jar MyApp.java
+java -cp "mysql-connector-j-8.2.0.jar;." MyApp
+```
+
+### Connection URL Format
+
+```
+jdbc:<subprotocol>://<host>:<port>/<database>?<params>
+```
+
+| Database | URL Example |
+|----------|------------|
+| MySQL | `jdbc:mysql://localhost:3306/mydb` |
+| PostgreSQL | `jdbc:postgresql://localhost:5432/mydb` |
+| SQLite | `jdbc:sqlite:mydb.sqlite` (file) or `jdbc:sqlite::memory:` |
+| H2 (in-memory) | `jdbc:h2:mem:testdb` |
+| Oracle | `jdbc:oracle:thin:@localhost:1521:orcl` |
+| SQL Server | `jdbc:sqlserver://localhost:1433;databaseName=mydb` |
+
+---
+
+## 4. Connecting to a Database
+
+### Basic Connection
+
+```java
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+
+public class DatabaseDemo {
+    public static void main(String[] args) {
+        String url = "jdbc:mysql://localhost:3306/mydb";
+        String user = "root";
+        String password = "secret";
+
+        // try-with-resources — auto-closes the connection
+        try (Connection conn = DriverManager.getConnection(url, user, password)) {
+            System.out.println("Connected!");
+            System.out.println("Database: " + conn.getCatalog());
+            System.out.println("Auto-commit: " + conn.getAutoCommit());
+        } catch (SQLException e) {
+            System.err.println("Connection failed: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+### Connection Lifecycle
+
+```
+1. DriverManager.getConnection()  → opens TCP connection to DB
+2. Use the connection (execute queries)
+3. connection.close()             → releases the TCP connection
+
+⚠️ ALWAYS close connections — leaked connections exhaust the DB connection pool
+```
+
+### Using Properties
+
+```java
+Properties props = new Properties();
+props.setProperty("user", "root");
+props.setProperty("password", "secret");
+props.setProperty("useSSL", "true");
+props.setProperty("serverTimezone", "UTC");
+
+Connection conn = DriverManager.getConnection(url, props);
+```
+
+---
+
+## 5. Statement — Executing Queries
+
+`Statement` executes static SQL — the SQL string is sent directly to the database.
+
+```java
+try (Connection conn = DriverManager.getConnection(url, user, password);
+     Statement stmt = conn.createStatement()) {
+
+    // SELECT — returns a ResultSet
+    ResultSet rs = stmt.executeQuery("SELECT id, name, salary FROM employees");
+    while (rs.next()) {
+        int id = rs.getInt("id");
+        String name = rs.getString("name");
+        double salary = rs.getDouble("salary");
+        System.out.println(id + " | " + name + " | " + salary);
+    }
+
+    // INSERT/UPDATE/DELETE — returns affected row count
+    int rowsAffected = stmt.executeUpdate(
+        "INSERT INTO employees (name, salary) VALUES ('Alice', 75000)"
+    );
+    System.out.println(rowsAffected + " row(s) inserted");
+
+    // DDL (CREATE TABLE, ALTER, DROP)
+    stmt.execute("CREATE TABLE IF NOT EXISTS logs (id INT AUTO_INCREMENT PRIMARY KEY, msg TEXT)");
+
+} catch (SQLException e) {
+    e.printStackTrace();
+}
+```
+
+### Three Execute Methods
+
+| Method | Use For | Returns |
+|--------|---------|---------|
+| `executeQuery(sql)` | SELECT | `ResultSet` |
+| `executeUpdate(sql)` | INSERT, UPDATE, DELETE, DDL | `int` (row count) |
+| `execute(sql)` | Any SQL (when you don't know the type) | `boolean` (true if ResultSet) |
+
+**⚠️ NEVER use `Statement` with user input — vulnerable to SQL injection!**
+
+```java
+// ❌ SQL INJECTION — attacker sends: name = "'; DROP TABLE employees; --"
+String name = userInput;
+stmt.executeQuery("SELECT * FROM employees WHERE name = '" + name + "'");
+// Becomes: SELECT * FROM employees WHERE name = ''; DROP TABLE employees; --'
+
+// ✓ Use PreparedStatement instead (next section)
+```
+
+---
+
+## 6. PreparedStatement — Parameterized Queries
+
+`PreparedStatement` is precompiled and uses `?` placeholders for parameters — **prevents SQL injection** and is faster for repeated queries.
+
+```java
+String sql = "SELECT * FROM employees WHERE department = ? AND salary > ?";
+
+try (Connection conn = DriverManager.getConnection(url, user, password);
+     PreparedStatement pstmt = conn.prepareStatement(sql)) {
+
+    // Set parameters (1-indexed, not 0-indexed!)
+    pstmt.setString(1, "Engineering");   // first ? = "Engineering"
+    pstmt.setDouble(2, 50000.0);         // second ? = 50000.0
+
+    ResultSet rs = pstmt.executeQuery();
+    while (rs.next()) {
+        System.out.println(rs.getString("name") + " - " + rs.getDouble("salary"));
+    }
+
+} catch (SQLException e) {
+    e.printStackTrace();
+}
+```
+
+### Setting Parameters by Type
+
+```java
+pstmt.setInt(1, 42);                          // int
+pstmt.setLong(1, 123456789L);                 // long
+pstmt.setDouble(1, 3.14);                     // double
+pstmt.setString(1, "Alice");                  // String
+pstmt.setBoolean(1, true);                    // boolean
+pstmt.setNull(1, Types.VARCHAR);              // NULL
+pstmt.setDate(1, java.sql.Date.valueOf("2024-01-15"));        // date
+pstmt.setTimestamp(1, Timestamp.valueOf("2024-01-15 10:30:00")); // timestamp
+pstmt.setObject(1, value);                    // generic (JDBC figures out type)
+```
+
+### INSERT with PreparedStatement
+
+```java
+String sql = "INSERT INTO employees (name, department, salary) VALUES (?, ?, ?)";
+
+try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+    pstmt.setString(1, "Bob");
+    pstmt.setString(2, "Marketing");
+    pstmt.setDouble(3, 65000.0);
+
+    int rows = pstmt.executeUpdate();
+    System.out.println(rows + " row(s) inserted");
+}
+```
+
+### Get Auto-Generated Keys (ID)
+
+```java
+String sql = "INSERT INTO employees (name, salary) VALUES (?, ?)";
+
+try (PreparedStatement pstmt = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+    pstmt.setString(1, "Charlie");
+    pstmt.setDouble(2, 80000.0);
+    pstmt.executeUpdate();
+
+    // Retrieve the generated ID
+    ResultSet keys = pstmt.getGeneratedKeys();
+    if (keys.next()) {
+        long newId = keys.getLong(1);
+        System.out.println("New employee ID: " + newId);
+    }
+}
+```
+
+### Statement vs PreparedStatement
+
+| | `Statement` | `PreparedStatement` |
+|--|-------------|---------------------|
+| SQL injection | Vulnerable | Safe (parameters are escaped) |
+| Performance | Compiled every time | Compiled once, reused |
+| Readability | String concatenation mess | Clean `?` placeholders |
+| Use case | DDL, one-off admin queries | Everything else (all CRUD) |
+
+**Rule: Always use PreparedStatement for any query that includes variables.**
+
+---
+
+## 7. ResultSet — Reading Results
+
+`ResultSet` is a cursor that iterates over rows returned by a SELECT query:
+
+```java
+ResultSet rs = pstmt.executeQuery();
+
+// Iterate rows
+while (rs.next()) {   // moves cursor to next row, returns false at end
+    // Read by column name (preferred — readable)
+    int id = rs.getInt("id");
+    String name = rs.getString("name");
+    double salary = rs.getDouble("salary");
+    boolean active = rs.getBoolean("active");
+    Date hireDate = rs.getDate("hire_date");
+
+    // Read by column index (1-based — faster but fragile)
+    int id2 = rs.getInt(1);
+    String name2 = rs.getString(2);
+}
+```
+
+### Handling NULLs
+
+```java
+double salary = rs.getDouble("salary");
+if (rs.wasNull()) {
+    // The last value read was SQL NULL
+    System.out.println("Salary is null");
+}
+
+// Or use getObject() which returns null for SQL NULL
+Integer age = (Integer) rs.getObject("age");   // null if SQL NULL
+```
+
+### ResultSet Getter Methods
+
+| SQL Type | Java Method | Java Type |
+|----------|-------------|-----------|
+| INT | `getInt()` | `int` |
+| BIGINT | `getLong()` | `long` |
+| FLOAT/DOUBLE | `getDouble()` | `double` |
+| DECIMAL | `getBigDecimal()` | `BigDecimal` |
+| VARCHAR/TEXT | `getString()` | `String` |
+| BOOLEAN | `getBoolean()` | `boolean` |
+| DATE | `getDate()` | `java.sql.Date` |
+| TIMESTAMP | `getTimestamp()` | `java.sql.Timestamp` |
+| BLOB | `getBytes()` / `getBlob()` | `byte[]` / `Blob` |
+
+---
+
+## 8. CRUD Operations — Full Example
+
+```java
+public class EmployeeDAO {
+    private static final String URL = "jdbc:mysql://localhost:3306/company";
+    private static final String USER = "root";
+    private static final String PASS = "secret";
+
+    private Connection getConnection() throws SQLException {
+        return DriverManager.getConnection(URL, USER, PASS);
+    }
+
+    // CREATE
+    public long create(String name, String dept, double salary) throws SQLException {
+        String sql = "INSERT INTO employees (name, department, salary) VALUES (?, ?, ?)";
+        try (Connection conn = getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+            ps.setString(1, name);
+            ps.setString(2, dept);
+            ps.setDouble(3, salary);
+            ps.executeUpdate();
+
+            ResultSet keys = ps.getGeneratedKeys();
+            return keys.next() ? keys.getLong(1) : -1;
+        }
+    }
+
+    // READ (single)
+    public void findById(long id) throws SQLException {
+        String sql = "SELECT * FROM employees WHERE id = ?";
+        try (Connection conn = getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, id);
+            ResultSet rs = ps.executeQuery();
+            if (rs.next()) {
+                System.out.println(rs.getString("name") + " | " +
+                                   rs.getString("department") + " | " +
+                                   rs.getDouble("salary"));
+            } else {
+                System.out.println("Not found");
+            }
+        }
+    }
+
+    // READ (all)
+    public void findAll() throws SQLException {
+        String sql = "SELECT * FROM employees ORDER BY name";
+        try (Connection conn = getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                System.out.printf("%d | %s | %s | %.2f%n",
+                    rs.getInt("id"),
+                    rs.getString("name"),
+                    rs.getString("department"),
+                    rs.getDouble("salary"));
+            }
+        }
+    }
+
+    // UPDATE
+    public int updateSalary(long id, double newSalary) throws SQLException {
+        String sql = "UPDATE employees SET salary = ? WHERE id = ?";
+        try (Connection conn = getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setDouble(1, newSalary);
+            ps.setLong(2, id);
+            return ps.executeUpdate();   // returns rows affected
+        }
+    }
+
+    // DELETE
+    public int delete(long id) throws SQLException {
+        String sql = "DELETE FROM employees WHERE id = ?";
+        try (Connection conn = getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, id);
+            return ps.executeUpdate();
+        }
+    }
+}
+```
+
+---
+
+## 9. Transactions
+
+By default, JDBC auto-commits every statement. For multi-statement operations that must succeed or fail together, use transactions:
+
+```java
+Connection conn = null;
+try {
+    conn = DriverManager.getConnection(url, user, password);
+    conn.setAutoCommit(false);   // ← START TRANSACTION
+
+    // Transfer $500 from account 1 to account 2
+    PreparedStatement debit = conn.prepareStatement(
+        "UPDATE accounts SET balance = balance - ? WHERE id = ?");
+    debit.setDouble(1, 500.0);
+    debit.setLong(2, 1);
+    debit.executeUpdate();
+
+    PreparedStatement credit = conn.prepareStatement(
+        "UPDATE accounts SET balance = balance + ? WHERE id = ?");
+    credit.setDouble(1, 500.0);
+    credit.setLong(2, 2);
+    credit.executeUpdate();
+
+    conn.commit();   // ← COMMIT — both succeed
+    System.out.println("Transfer successful");
+
+} catch (SQLException e) {
+    if (conn != null) {
+        try { conn.rollback(); } catch (SQLException ex) { ex.printStackTrace(); }
+        // ← ROLLBACK — neither happens
+    }
+    System.err.println("Transfer failed: " + e.getMessage());
+} finally {
+    if (conn != null) {
+        try { conn.setAutoCommit(true); conn.close(); } catch (SQLException e) {}
+    }
+}
+```
+
+### Savepoints (Partial Rollback)
+
+```java
+conn.setAutoCommit(false);
+
+Savepoint sp = conn.setSavepoint("before_risky_operation");
+
+try {
+    // risky operation
+    stmt.executeUpdate("DELETE FROM logs WHERE age > 365");
+    conn.commit();
+} catch (SQLException e) {
+    conn.rollback(sp);   // roll back to savepoint, keep earlier work
+    conn.commit();       // commit everything before the savepoint
+}
+```
+
+### Transaction Isolation Levels
+
+```java
+conn.setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED);
+```
+
+| Level | Constant | Dirty Reads | Non-Repeatable Reads | Phantom Reads |
+|-------|----------|:-:|:-:|:-:|
+| Read Uncommitted | `TRANSACTION_READ_UNCOMMITTED` | Yes | Yes | Yes |
+| Read Committed | `TRANSACTION_READ_COMMITTED` | No | Yes | Yes |
+| Repeatable Read | `TRANSACTION_REPEATABLE_READ` | No | No | Yes |
+| Serializable | `TRANSACTION_SERIALIZABLE` | No | No | No |
+
+---
+
+## 10. Batch Processing
+
+Execute many similar statements efficiently — send them all at once instead of one-by-one:
+
+```java
+String sql = "INSERT INTO employees (name, department, salary) VALUES (?, ?, ?)";
+
+try (Connection conn = getConnection();
+     PreparedStatement ps = conn.prepareStatement(sql)) {
+
+    conn.setAutoCommit(false);   // batch in a single transaction
+
+    String[][] data = {
+        {"Alice", "IT", "75000"},
+        {"Bob", "HR", "65000"},
+        {"Charlie", "IT", "80000"},
+        {"Diana", "Finance", "70000"}
+    };
+
+    for (String[] row : data) {
+        ps.setString(1, row[0]);
+        ps.setString(2, row[1]);
+        ps.setDouble(3, Double.parseDouble(row[2]));
+        ps.addBatch();   // add to batch (doesn't execute yet)
+    }
+
+    int[] results = ps.executeBatch();   // execute all at once
+    conn.commit();
+
+    System.out.println("Inserted " + results.length + " rows");
+}
+```
+
+**Performance tip:** For large inserts (thousands of rows), batch in chunks of 500–1000:
+
+```java
+int batchSize = 500;
+int count = 0;
+for (String[] row : largeDataset) {
+    ps.setString(1, row[0]);
+    ps.addBatch();
+    if (++count % batchSize == 0) {
+        ps.executeBatch();   // flush every 500
+    }
+}
+ps.executeBatch();   // flush remaining
+conn.commit();
+```
+
+---
+
+## 11. CallableStatement — Stored Procedures
+
+Call database stored procedures and functions:
+
+```sql
+-- MySQL stored procedure
+DELIMITER //
+CREATE PROCEDURE get_employees_by_dept(IN dept_name VARCHAR(50))
+BEGIN
+    SELECT * FROM employees WHERE department = dept_name;
+END //
+DELIMITER ;
+```
+
+```java
+String sql = "{CALL get_employees_by_dept(?)}";
+
+try (Connection conn = getConnection();
+     CallableStatement cs = conn.prepareCall(sql)) {
+
+    cs.setString(1, "Engineering");
+    ResultSet rs = cs.executeQuery();
+
+    while (rs.next()) {
+        System.out.println(rs.getString("name"));
+    }
+}
+```
+
+### With OUT Parameters
+
+```sql
+CREATE PROCEDURE count_employees(IN dept VARCHAR(50), OUT total INT)
+BEGIN
+    SELECT COUNT(*) INTO total FROM employees WHERE department = dept;
+END;
+```
+
+```java
+String sql = "{CALL count_employees(?, ?)}";
+try (CallableStatement cs = conn.prepareCall(sql)) {
+    cs.setString(1, "Engineering");           // IN parameter
+    cs.registerOutParameter(2, Types.INTEGER); // OUT parameter
+    cs.execute();
+
+    int count = cs.getInt(2);   // read OUT parameter
+    System.out.println("Count: " + count);
+}
+```
+
+---
+
+## 12. Connection Pooling
+
+Opening a new database connection is expensive (~100-500ms). A connection pool maintains reusable connections.
+
+### HikariCP (Fastest Pool — Industry Standard)
+
+**Maven:**
+```xml
+<dependency>
+    <groupId>com.zaxxer</groupId>
+    <artifactId>HikariCP</artifactId>
+    <version>5.1.0</version>
+</dependency>
+```
+
+```java
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
+
+public class DatabasePool {
+    private static final HikariDataSource dataSource;
+
+    static {
+        HikariConfig config = new HikariConfig();
+        config.setJdbcUrl("jdbc:mysql://localhost:3306/mydb");
+        config.setUsername("root");
+        config.setPassword("secret");
+        config.setMaximumPoolSize(10);           // max 10 connections
+        config.setMinimumIdle(2);                // keep 2 idle connections ready
+        config.setConnectionTimeout(30000);      // 30s timeout to get a connection
+        config.setIdleTimeout(600000);           // 10 min idle before closing
+        config.setMaxLifetime(1800000);          // 30 min max connection life
+
+        dataSource = new HikariDataSource(config);
+    }
+
+    public static Connection getConnection() throws SQLException {
+        return dataSource.getConnection();   // borrows from pool (fast — no TCP handshake)
+    }
+
+    public static void close() {
+        dataSource.close();   // shutdown pool (call on app exit)
+    }
+}
+```
+
+**Usage:**
+```java
+// Borrow connection from pool → use → return to pool (via close)
+try (Connection conn = DatabasePool.getConnection();
+     PreparedStatement ps = conn.prepareStatement("SELECT * FROM employees")) {
+    ResultSet rs = ps.executeQuery();
+    // ...
+}
+// conn.close() here returns it to the pool (doesn't actually close TCP)
+```
+
+### Without Pool vs With Pool
+
+```
+Without pool:
+  getConnection() → TCP handshake → SSL negotiate → authenticate → ready (~200ms)
+  close()         → TCP close
+
+With pool:
+  getConnection() → borrow idle connection from pool (~0.1ms)
+  close()         → return connection to pool (stays open)
+```
+
+---
+
+## 13. DAO Pattern — Organizing JDBC Code
+
+The **Data Access Object (DAO)** pattern separates database logic from business logic:
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│  Service     │ ──► │    DAO      │ ──► │  Database   │
+│  (business)  │     │  (JDBC)     │     │             │
+└─────────────┘     └─────────────┘     └─────────────┘
+```
+
+### Employee Model
+
+```java
+public class Employee {
+    private long id;
+    private String name;
+    private String department;
+    private double salary;
+
+    // constructors, getters, setters, toString
+    public Employee(long id, String name, String department, double salary) {
+        this.id = id;
+        this.name = name;
+        this.department = department;
+        this.salary = salary;
+    }
+
+    // getters...
+    public long getId() { return id; }
+    public String getName() { return name; }
+    public String getDepartment() { return department; }
+    public double getSalary() { return salary; }
+}
+```
+
+### DAO Interface
+
+```java
+public interface EmployeeDao {
+    Employee findById(long id);
+    List<Employee> findAll();
+    List<Employee> findByDepartment(String dept);
+    long save(Employee emp);
+    boolean update(Employee emp);
+    boolean delete(long id);
+}
+```
+
+### DAO Implementation
+
+```java
+public class EmployeeDaoJdbc implements EmployeeDao {
+
+    @Override
+    public Employee findById(long id) {
+        String sql = "SELECT * FROM employees WHERE id = ?";
+        try (Connection conn = DatabasePool.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setLong(1, id);
+            ResultSet rs = ps.executeQuery();
+            if (rs.next()) {
+                return mapRow(rs);
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to find employee: " + id, e);
+        }
+        return null;
+    }
+
+    @Override
+    public List<Employee> findAll() {
+        String sql = "SELECT * FROM employees ORDER BY name";
+        List<Employee> employees = new ArrayList<>();
+        try (Connection conn = DatabasePool.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                employees.add(mapRow(rs));
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to fetch employees", e);
+        }
+        return employees;
+    }
+
+    @Override
+    public long save(Employee emp) {
+        String sql = "INSERT INTO employees (name, department, salary) VALUES (?, ?, ?)";
+        try (Connection conn = DatabasePool.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+            ps.setString(1, emp.getName());
+            ps.setString(2, emp.getDepartment());
+            ps.setDouble(3, emp.getSalary());
+            ps.executeUpdate();
+            ResultSet keys = ps.getGeneratedKeys();
+            return keys.next() ? keys.getLong(1) : -1;
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to save employee", e);
+        }
+    }
+
+    // Helper — maps a ResultSet row to an Employee object
+    private Employee mapRow(ResultSet rs) throws SQLException {
+        return new Employee(
+            rs.getLong("id"),
+            rs.getString("name"),
+            rs.getString("department"),
+            rs.getDouble("salary")
+        );
+    }
+}
+```
+
+---
+
+## 14. Common Errors and Troubleshooting
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `ClassNotFoundException: com.mysql.cj.jdbc.Driver` | Driver JAR not on classpath | Add MySQL connector JAR to classpath or Maven |
+| `No suitable driver found for jdbc:mysql://...` | URL typo or driver not loaded | Check URL format, ensure driver JAR is present |
+| `Access denied for user 'root'@'localhost'` | Wrong username/password | Verify credentials, check DB user permissions |
+| `Communications link failure` | DB server not running or wrong host/port | Start the DB, check host:port |
+| `Connection refused` | Firewall or DB not listening on that port | Check `netstat`, DB config, firewall rules |
+| `Too many connections` | Connections not being closed (leaked) | Always use try-with-resources, use connection pool |
+| `Column 'X' not found` | Typo in column name in `rs.getString("X")` | Check actual column names in DB schema |
+| `Parameter index out of range` | PreparedStatement `?` index wrong (1-based!) | First `?` is `1`, not `0` |
+| `ResultSet closed` | Calling `rs.next()` after statement/connection closed | Keep ResultSet inside the try-with-resources scope |
+
+---
+
+## 15. Best Practices
+
+### Resource Management
+
+```java
+// ✓ ALWAYS use try-with-resources (auto-closes in reverse order)
+try (Connection conn = getConnection();
+     PreparedStatement ps = conn.prepareStatement(sql);
+     ResultSet rs = ps.executeQuery()) {
+    // use rs
+}
+// Connection, Statement, ResultSet all closed automatically
+
+// ❌ NEVER do this — resource leak
+Connection conn = getConnection();
+PreparedStatement ps = conn.prepareStatement(sql);
+ResultSet rs = ps.executeQuery();
+// if exception happens above, nothing gets closed!
+```
+
+### Security
+
+```java
+// ✓ PreparedStatement — parameters are escaped, SQL injection impossible
+ps.setString(1, userInput);
+
+// ❌ String concatenation — SQL injection vulnerable
+stmt.executeQuery("SELECT * FROM users WHERE name = '" + userInput + "'");
+```
+
+### Performance
+
+| Tip | Why |
+|-----|-----|
+| Use connection pooling (HikariCP) | Avoid TCP handshake per query |
+| Use PreparedStatement (not Statement) | Compiled once, executed many times |
+| Use batch inserts for bulk data | One network round-trip instead of N |
+| Fetch only needed columns | `SELECT name, salary` not `SELECT *` |
+| Use indexes in WHERE clauses | Database-side optimization |
+| Set fetch size for large results | `ps.setFetchSize(100)` — controls memory |
+| Close connections in finally/try-with-resources | Prevent connection leaks |
+
+### Mapping Conventions
+
+```java
+// ResultSet → Object (row mapper pattern)
+private Employee mapRow(ResultSet rs) throws SQLException {
+    return new Employee(
+        rs.getLong("id"),
+        rs.getString("name"),
+        rs.getString("department"),
+        rs.getDouble("salary")
+    );
+}
+
+// Reuse across all SELECT methods — DRY
+```
+
+### Summary: JDBC Workflow
+
+```
+1. Get connection     → DriverManager.getConnection() or pool.getConnection()
+2. Create statement   → conn.prepareStatement(sql)
+3. Set parameters     → ps.setString(1, value)
+4. Execute            → ps.executeQuery() or ps.executeUpdate()
+5. Process results    → while (rs.next()) { rs.getString(...) }
+6. Close resources    → try-with-resources handles it
+```
